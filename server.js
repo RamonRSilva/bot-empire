@@ -2,8 +2,10 @@ const express = require('express');
 const http = require('http');
 const net = require('net');
 const path = require('path');
+const cors = require('cors');
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -12,24 +14,42 @@ const contasAtivas = {};
 const TARGET_HOST = 'e4k-live-mz-cn1-hant1-game.goodgamestudios.com';
 const TARGET_PORT = 443;
 
+// Rota de Health-Check / Ping para manter o Render acordado
+app.get('/ping', (req, res) => {
+  res.status(200).send('Bot Empire Online & Active');
+});
+
+app.get('/', (req, res) => {
+  res.status(200).send('Servidor do Bot Empire Four Kingdoms a funcionar corretamente.');
+});
+
 function processarMensagem(resposta, socket, user, pass, faseState) {
   console.log(`[RESPOSTA RECEBIDA - ${user}]:`, resposta);
 
-  // Passo 1 -> Passo 2: Confirmar apiOK e enviar pacote de Login XML
+  // Passo 1 -> Passo 2: Confirmar apiOK e enviar credenciais (XML + XT)
   if (faseState.fase === 1 && resposta.includes('apiOK')) {
     faseState.fase = 2;
-    console.log(`[PASSO 2] apiOK confirmado! Enviando pacote de login XML...`);
+    console.log(`[PASSO 2] apiOK confirmado! Enviando credenciais de login para ${user}...`);
     
+    // 1. Enviar login XML do SmartFoxServer
     const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${pass}" /></login></body></msg>\x00`;
     socket.write(xmlLogin);
+
+    // 2. Enviar o pacote de extensão XT exigido pelo Goodgame Studios
+    setTimeout(() => {
+      const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${user}%${pass}%\x00`;
+      socket.write(xtLogin);
+      console.log(`[PASSO 2.1] Pacote de extensão XT de login enviado.`);
+    }, 500);
+
     return;
   }
 
-  // Passo 2 -> Passo 3: Tratar resposta de confirmação de login (logOK)
+  // Passo 2 -> Passo 3: Tratar resposta de confirmação de login
   if (faseState.fase === 2) {
-    if (resposta.includes('action="logOK"') || resposta.includes('logOK')) {
+    if (resposta.includes('action="logOK"') || resposta.includes('logOK') || resposta.includes('%xt%login')) {
       faseState.fase = 3;
-      console.log(`[PASSO 3] Login aceito pelo servidor! Entrando no mundo do jogo...`);
+      console.log(`[PASSO 3] Login aceito pelo servidor para ${user}! Entrando no mundo do jogo...`);
       
       // Enviar comando de sincronização inicial após 1 segundo
       setTimeout(() => {
@@ -39,14 +59,14 @@ function processarMensagem(resposta, socket, user, pass, faseState) {
       }, 1000);
 
     } else if (resposta.includes('action="logKO"') || resposta.includes('error')) {
-      console.error(`[ERRO DE LOGIN] Falha de autenticação para ${user}. Verifique usuário e senha.`);
+      console.error(`[ERRO DE LOGIN] Falha de autenticação para ${user}. Verifique o utilizador e a palavra-passe.`);
     }
   }
 
-  // Passo 4: Monitorar pacotes de extensão do jogo (%xt%) após o login completo
+  // Passo 4: Monitorar pacotes de dados do jogo (%xt%) após o login completo
   if (faseState.fase === 3) {
     if (resposta.includes('%xt%')) {
-      console.log(`[JOGO - ${user}] Pacote de dados recebido do servidor.`);
+      console.log(`[DADOS DO JOGO - ${user}] Pacote XT capturado com sucesso.`);
     }
   }
 }
@@ -78,7 +98,7 @@ app.post('/api/conectar', (req, res) => {
     faseState.fase = 1;
     const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
     client.write(xmlHandshake);
-    console.log(`[PASSO 1] Handshake verChk enviado.`);
+    console.log(`[PASsos 1] Handshake verChk enviado.`);
   });
 
   client.on('data', (data) => {
