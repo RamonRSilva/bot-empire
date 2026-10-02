@@ -2,10 +2,8 @@ const express = require('express');
 const http = require('http');
 const net = require('net');
 const path = require('path');
-const cors = require('cors');
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -98,7 +96,7 @@ app.post('/api/conectar', (req, res) => {
     faseState.fase = 1;
     const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
     client.write(xmlHandshake);
-    console.log(`[PASsos 1] Handshake verChk enviado.`);
+    console.log(`[PASSO 1] Handshake verChk enviado.`);
   });
 
   client.on('data', (data) => {
