@@ -9,7 +9,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const contasAtivas = {};
 
-// Host e Porta identificados na captura PCAPdroid para o servidor HANT1
 const TARGET_HOST = 'e4k-live-mz-cn1-hant1-game.goodgamestudios.com';
 const TARGET_PORT = 443;
 
@@ -20,42 +19,45 @@ app.post('/api/conectar', (req, res) => {
     return res.status(400).json({ erro: 'Nome do jogador e Senha são obrigatórios.' });
   }
 
-  console.log(`[SISTEMA] Iniciando fluxo de conexão TCP para ${usuario} no servidor ${mundo || 'HANT1'}...`);
+  console.log(`[TCP SOCK] Disparando conexão v16 para ${usuario}...`);
 
-  // Encerrar conexão anterior se existir
   if (contasAtivas[usuario] && contasAtivas[usuario].socket) {
     contasAtivas[usuario].socket.destroy();
   }
 
   const client = new net.Socket();
-  let faseLogin = 0; // 0: Inicial, 1: Handshake enviado, 2: Login enviado
+  let faseLogin = 0;
 
   client.connect(TARGET_PORT, TARGET_HOST, () => {
-    console.log(`[TCP CONECTADO] Socket estabelecido com ${TARGET_HOST}:${TARGET_PORT}`);
+    console.log(`[TCP CONECTADO] Socket ativo com ${TARGET_HOST}:${TARGET_PORT}`);
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
-    // Passo 1: Enviar Handshake XML do SmartFoxServer com delimitador NUL
+    // Passo 1: Handshake
     faseLogin = 1;
     const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
     client.write(xmlHandshake);
-    console.log(`[PASSO 1] Handshake verChk enviado com sucesso.`);
+    console.log(`[PASSO 1] Handshake verChk enviado.`);
   });
 
   client.on('data', (data) => {
     const resposta = data.toString();
-    console.log(`[RESPOSTA JOGO - ${usuario}]:`, resposta);
+    console.log(`[RESPOSTA CRUA - ${usuario}]:`, resposta);
 
-    // Passo 2: Servidor respondeu apiOK -> Enviar payload de login
+    // Passo 2: apiOK recebido -> Enviar login com extensão do jogo (%xt%)
     if (faseLogin === 1 && resposta.includes('apiOK')) {
       faseLogin = 2;
-      console.log(`[PASSO 2] Servidor retornou apiOK! Enviando credenciais de autenticação...`);
+      console.log(`[PASSO 2] apiOK confirmado! Enviando pacote de login de extensão...`);
       
-      // Estrutura de login em formato XML com zone do servidor
+      // Formato XML de login SmartFoxServer com zona de jogo
       const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${usuario}" p="${senha}" /></login></body></msg>\x00`;
       client.write(xmlLogin);
-      console.log(`[PASSO 2] Payload de login enviado para ${usuario}.`);
-    } else if (faseLogin === 2) {
-      console.log(`[PASSO 3] Resposta de autenticação recebida para ${usuario}.`);
+
+      // Enviar também formato de extensão %xt% caso o servidor use extensão customizada
+      setTimeout(() => {
+        const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${usuario}%${senha}%\x00`;
+        client.write(xtLogin);
+        console.log(`[PASSO 2.1] Pacote de extensão XT enviado.`);
+      }, 500);
     }
   });
 
@@ -64,11 +66,11 @@ app.post('/api/conectar', (req, res) => {
   });
 
   client.on('close', () => {
-    console.log(`[SOCKET FECHADO - ${usuario}] Conexão com o servidor do jogo encerrada.`);
+    console.log(`[SOCKET FECHADO - ${usuario}] Conexão encerrada.`);
     if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
   });
 
-  res.json({ mensagem: `Fluxo de autenticação TCP iniciado. Acompanhe as respostas detalhadas nos logs do Render.` });
+  res.json({ mensagem: `Processo v16 iniciado para ${usuario}. Acompanhe os logs no Render.` });
 });
 
 const PORT = process.env.PORT || 10000;
