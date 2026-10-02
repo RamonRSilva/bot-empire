@@ -26,38 +26,30 @@ app.get('/', (req, res) => {
 });
 
 function processarMensagem(resposta, socket, user, passMd5, zona, faseState) {
-  console.log(`[RESPOSTA TCP - ${user} (Fase ${faseState.fase})]:`, resposta);
+  console.log(`[RESPOSTA TCP - ${user}]:`, resposta);
 
-  // Fase 1: Recebeu o policy file ou resposta inicial, agora envia o verChk
-  if (faseState.fase === 1) {
+  // Assim que recebe o apiOK do verChk, envia o login imediatamente
+  if (faseState.fase === 1 && (resposta.includes('apiOK') || resposta.includes('action="apiOK"'))) {
     faseState.fase = 2;
-    console.log(`[PASSO 1.1] A enviar Handshake verChk para ${user}...`);
-    const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
-    socket.write(xmlHandshake);
-    return;
-  }
-
-  // Fase 2: Recebeu o apiOK, agora envia as credenciais de login
-  if (faseState.fase === 2 && (resposta.includes('apiOK') || resposta.includes('action="apiOK"'))) {
-    faseState.fase = 3;
-    console.log(`[PASSO 2] apiOK confirmado para ${zona}! A enviar login XML...`);
+    console.log(`[PASSO 2] apiOK confirmado para ${zona}! A enviar credenciais...`);
     
+    // Envio unificado do login XML
     const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="${zona}"><body u="${user}" p="${passMd5}" /></login></body></msg>\x00`;
     socket.write(xmlLogin);
 
+    // Envio do pacote XT complementar
     setTimeout(() => {
       const xtLogin = `%xt%${zona}%login%1%${user}%${passMd5}%en%166%\x00`;
       socket.write(xtLogin);
-      console.log(`[PASSO 2.1] Pacote XT de login enviado para a zona ${zona}.`);
-    }, 800);
+      console.log(`[PASSO 2.1] Pacote XT enviado para a zona ${zona}.`);
+    }, 500);
 
     return;
   }
 
-  // Fase 3: Verificar resposta após o login
-  if (faseState.fase === 3) {
+  if (faseState.fase === 2) {
     if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('%xt%login%0%') || resposta.includes('action="logOK"')) {
-      faseState.fase = 4;
+      faseState.fase = 3;
       console.log(`[SUCESSO] Login autenticado com êxito para ${user}!`);
       
       setTimeout(() => {
@@ -99,13 +91,14 @@ app.post('/api/conectar', (req, res) => {
   const targetDest = infoMundo.ip || infoMundo.host;
 
   client.connect(443, targetDest, () => {
-    console.log(`[TCP CONECTADO] Ligado a ${targetDest}:443. A solicitar Policy File...`);
+    console.log(`[TCP CONECTADO] Ligado a ${targetDest}:443`);
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
     faseState.fase = 1;
-    // O SmartFoxServer exige obrigatoriamente o pedido de política de segurança na porta 443
-    const policyRequest = '<policy-file-request/>\x00';
-    client.write(policyRequest);
+    // Handshake verChk direto que sabemos que funciona e retorna o apiOK
+    const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
+    client.write(xmlHandshake);
+    console.log(`[PASSO 1] Handshake verChk enviado.`);
   });
 
   client.on('data', (data) => {
