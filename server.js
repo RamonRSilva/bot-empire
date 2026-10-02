@@ -9,11 +9,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const contasAtivas = {};
 
-// Mapeamento de endpoints por Mundo
-const ENDPOINTS_MUNDO = {
-  'HANT1': 'wss://52.77.8.40:443',
-  'BR1': 'wss://52.77.8.40:443'
-};
+// Endpoint WebSocket do servidor HANT1
+const ENDPOINT_HANT1 = 'wss://52.77.8.40:443'; 
 
 app.post('/api/conectar', (req, res) => {
   const { id, usuario, senha, mundo, automacoes } = req.body;
@@ -22,36 +19,43 @@ app.post('/api/conectar', (req, res) => {
     return res.status(400).json({ erro: 'Nome do jogador e Senha são obrigatórios.' });
   }
 
-  const endpoint = ENDPOINTS_MUNDO[mundo] || ENDPOINTS_MUNDO['HANT1'];
-  console.log(`[LOGIN] Conectando ${usuario} no mundo ${mundo}...`);
+  console.log(`[LOGIN] Iniciando conexão para ${usuario} no mundo ${mundo || 'HANT1'}...`);
 
-  const ws = new WebSocket(endpoint);
+  // Bypass na verificação estrita de certificado SSL do servidor do jogo
+  const ws = new WebSocket(ENDPOINT_HANT1, {
+    rejectUnauthorized: false
+  });
 
   contasAtivas[usuario] = { usuario, mundo, conectado: false, ws };
 
   ws.on('open', () => {
-    console.log(`[WS] Conectado ao servidor do mundo ${mundo}`);
+    console.log(`[WS HANT1] Conexão TLS estabelecida para ${usuario}!`);
+    contasAtivas[usuario].conectado = true;
     
-    // Pacote de Login formatado com Nome do Jogador e Senha
     const payloadLogin = {
       cmd: 'login',
       user: usuario,
       pass: senha,
-      world: mundo
+      world: mundo || 'HANT1'
     };
 
     ws.send(JSON.stringify(payloadLogin));
   });
 
   ws.on('message', (data) => {
-    console.log(`[JOGO - ${usuario}]:`, data.toString());
+    console.log(`[RESPOSTA JOGO - ${usuario}]:`, data.toString());
   });
 
   ws.on('error', (err) => {
-    console.error(`[ERRO - ${usuario}]:`, err.message);
+    console.error(`[ERRO WS - ${usuario}]:`, err.message);
   });
 
-  res.json({ mensagem: `Dados de login enviados para o mundo ${mundo}. Verifique os logs.` });
+  ws.on('close', () => {
+    console.log(`[WS HANT1 - ${usuario}] Conexão encerrada.`);
+    if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
+  });
+
+  res.json({ mensagem: `Tentativa de conexão enviada com bypass TLS para ${usuario}.` });
 });
 
 const PORT = process.env.PORT || 10000;
