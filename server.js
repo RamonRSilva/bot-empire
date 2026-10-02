@@ -15,7 +15,7 @@ const TARGET_PORT = 443;
 function processarMensagem(resposta, socket, user, pass, faseState) {
   console.log(`[RESPOSTA RECEBIDA - ${user}]:`, resposta);
 
-  // Passo 2: Confirmar apiOK e enviar requisição de Login em XML
+  // Passo 1 -> Passo 2: Confirmar apiOK e enviar pacote de Login XML
   if (faseState.fase === 1 && resposta.includes('apiOK')) {
     faseState.fase = 2;
     console.log(`[PASSO 2] apiOK confirmado! Enviando pacote de login XML...`);
@@ -25,16 +25,28 @@ function processarMensagem(resposta, socket, user, pass, faseState) {
     return;
   }
 
-  // Passo 3: Tratar resposta de confirmação de login
+  // Passo 2 -> Passo 3: Tratar resposta de confirmação de login (logOK)
   if (faseState.fase === 2) {
     if (resposta.includes('action="logOK"') || resposta.includes('logOK')) {
       faseState.fase = 3;
-      console.log(`[PASSO 3] Login aceito pelo servidor! Entrando na sala principal...`);
+      console.log(`[PASSO 3] Login aceito pelo servidor! Entrando no mundo do jogo...`);
       
-      const joinRoom = `%xt%e4k-live-mz-cn1-hant1%cmd%1%{"cmd":"k","param":{}}%\x00`;
-      socket.write(joinRoom);
+      // Enviar comando de sincronização inicial após 1 segundo
+      setTimeout(() => {
+        const joinGame = `%xt%e4k-live-mz-cn1-hant1%cmd%1%{"cmd":"k","param":{}}%\x00`;
+        socket.write(joinGame);
+        console.log(`[PASSO 3.1] Comando de sincronização inicial enviado.`);
+      }, 1000);
+
     } else if (resposta.includes('action="logKO"') || resposta.includes('error')) {
-      console.error(`[ERRO DE LOGIN] Credenciais inválidas ou erro no formato para ${user}.`);
+      console.error(`[ERRO DE LOGIN] Falha de autenticação para ${user}. Verifique usuário e senha.`);
+    }
+  }
+
+  // Passo 4: Monitorar pacotes de extensão do jogo (%xt%) após o login completo
+  if (faseState.fase === 3) {
+    if (resposta.includes('%xt%')) {
+      console.log(`[JOGO - ${user}] Pacote de dados recebido do servidor.`);
     }
   }
 }
