@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const net = require('net');
 const path = require('path');
-const crypto = require('crypto'); // Biblioteca nativa do Node.js para MD5
+const crypto = require('crypto');
 
 const app = express();
 app.use(express.json());
@@ -22,45 +22,41 @@ app.get('/', (req, res) => {
 });
 
 function processarMensagem(resposta, socket, user, passMd5, faseState) {
-  console.log(`[RESPOSTA BRUTA - ${user}]:`, resposta);
+  console.log(`[RESPOSTA GLOBAL DO SERVIDOR - ${user}]:`, resposta);
 
-  if (faseState.fase === 1 && resposta.includes('apiOK')) {
+  // Passo 1: Recebeu o apiOK inicial do SFS
+  if (faseState.fase === 1 && (resposta.includes('apiOK') || resposta.includes('action="apiOK"'))) {
     faseState.fase = 2;
-    console.log(`[PASSO 2] apiOK confirmado! Enviando credenciais com hash MD5 para ${user}...`);
+    console.log(`[PASSO 2] apiOK confirmado! A enviar login XML e XT para ${user}...`);
     
-    // 1. Enviar login XML com a senha em MD5
+    // 1. Login XML Padrão
     const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${passMd5}" /></login></body></msg>\x00`;
     socket.write(xmlLogin);
 
-    // 2. Enviar extensão XT de autenticação com a senha em MD5
+    // 2. Pacote XT de Extensão de Login com parâmetros expandidos (Zona, Versão e Credenciais)
     setTimeout(() => {
-      const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${user}%${passMd5}%\x00`;
+      // Formato expandido: %xt%zona%login%id%usuario%senha%idioma%versao%
+      const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${user}%${passMd5}%en%166%\x00`;
       socket.write(xtLogin);
-      console.log(`[PASSO 2.1] Pacote XT de login MD5 enviado. Aguardando validação...`);
+      console.log(`[PASSO 2.1] Pacote XT expandido enviado. A monitorizar resposta...`);
     }, 500);
 
     return;
   }
 
+  // Passo 2: Analisar qualquer resposta após o envio do login
   if (faseState.fase === 2) {
-    if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('action="logOK"')) {
+    if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('action="logOK"') || resposta.includes('%xt%login%0%')) {
       faseState.fase = 3;
       console.log(`[SUCESSO] Login autenticado com êxito para ${user}!`);
       
       setTimeout(() => {
         const joinGame = `%xt%e4k-live-mz-cn1-hant1%cmd%1%{"cmd":"k","param":{}}%\x00`;
         socket.write(joinGame);
-        console.log(`[PASSO 3] Comando de sincronização enviado.`);
+        console.log(`[PASSO 3] Comando de sincronização inicial enviado.`);
       }, 1000);
-
-    } else if (resposta.includes('logKO') || resposta.includes('error') || resposta.includes('ko') || resposta.includes('action="logKO"')) {
-      console.error(`[FALHA DE AUTENTICAÇÃO] O servidor rejeitou as credenciais para ${user}. Resposta:`, resposta);
-    }
-  }
-
-  if (faseState.fase === 3) {
-    if (resposta.includes('%xt%')) {
-      console.log(`[DADOS DO JOGO - ${user}] Pacote XT capturado com sucesso.`);
+    } else if (resposta.includes('logKO') || resposta.includes('error') || resposta.includes('ko')) {
+      console.error(`[REJEITADO] O servidor recusou o login para ${user}:`, resposta);
     }
   }
 }
@@ -72,16 +68,13 @@ app.post('/api/conectar', (req, res) => {
     return res.status(400).json({ erro: 'Nome do jogador e Senha são obrigatórios.' });
   }
 
-  // Converter a senha para hash MD5 (padrão exigido por muitos servidores SFS)
   const senhaMd5 = crypto.createHash('md5').update(senha).digest('hex');
 
-  console.log(`[TCP SOCK] A preparar nova conexão para ${usuario}...`);
+  console.log(`[TCP SOCK] A iniciar ligação socket para ${usuario}...`);
 
   if (contasAtivas[usuario]) {
     if (contasAtivas[usuario].socket) {
-      try {
-        contasAtivas[usuario].socket.destroy();
-      } catch (e) {}
+      try { contasAtivas[usuario].socket.destroy(); } catch (e) {}
     }
     delete contasAtivas[usuario];
   }
@@ -93,7 +86,7 @@ app.post('/api/conectar', (req, res) => {
   client.setKeepAlive(true, 10000);
 
   client.connect(TARGET_PORT, TARGET_HOST, () => {
-    console.log(`[TCP CONECTADO] Socket limpo e ativo com ${TARGET_HOST}:${TARGET_PORT}`);
+    console.log(`[TCP CONECTADO] Ligado a ${TARGET_HOST}:${TARGET_PORT}`);
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
     faseState.fase = 1;
@@ -122,30 +115,20 @@ app.post('/api/conectar', (req, res) => {
   });
 
   client.on('close', () => {
-    console.log(`[SOCKET FECHADO - ${usuario}] Conexão limpa e encerrada.`);
+    console.log(`[SOCKET FECHADO - ${usuario}] Ligação encerrada.`);
     if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
   });
 
-  res.json({ mensagem: `Conexão iniciada com sucesso para ${usuario}.` });
+  res.json({ mensagem: `Ligação iniciada para ${usuario}.` });
 });
 
 app.post('/api/desconectar', (req, res) => {
   const { usuario } = req.body;
-
-  if (!usuario || !contasAtivas[usuario]) {
-    return res.status(404).json({ erro: 'Nenhuma conexão ativa encontrada para este utilizador.' });
+  if (contasAtivas[usuario]?.socket) {
+    try { contasAtivas[usuario].socket.destroy(); } catch (e) {}
+    delete contasAtivas[usuario];
   }
-
-  console.log(`[TCP SOCK] A encerrar conexão a pedido do painel para ${usuario}...`);
-
-  if (contasAtivas[usuario].socket) {
-    try {
-      contasAtivas[usuario].socket.destroy();
-    } catch (e) {}
-  }
-  delete contasAtivas[usuario];
-
-  res.json({ mensagem: `Bot desconectado com sucesso para ${usuario}.` });
+  res.json({ mensagem: `Desconectado com sucesso.` });
 });
 
 const PORT = process.env.PORT || 10000;
