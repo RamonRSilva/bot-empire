@@ -9,11 +9,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const contasAtivas = {};
 
-// Lista de endpoints conhecidos do E4K (com fallback automático se o principal der timeout)
+// Domínios oficiais do jogo Empire: Four Kingdoms (evita bloqueio por IP direto)
 const ENDPOINTS = [
-  'wss://52.77.8.40:443',
-  'ws://52.77.8.40:8080',
-  'ws://52.77.8.40:9300'
+  'wss://hant1.goodgamestudios.com:443',
+  'wss://hant1-live.goodgamestudios.com:443',
+  'wss://e4k-hant1.goodgamestudios.com:443',
+  'ws://hant1.goodgamestudios.com:8080'
 ];
 
 app.post('/api/conectar', (req, res) => {
@@ -30,21 +31,21 @@ app.post('/api/conectar', (req, res) => {
 
     const ws = new WebSocket(url, {
       rejectUnauthorized: false,
-      handshakeTimeout: 7000, // Timeout de 7 segundos
+      handshakeTimeout: 7000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Android; Mobile)',
+        'User-Agent': 'Mozilla/5.0 (Android; Mobile; rv:109.0) Gecko/109.0 Firefox/115.0',
         'Origin': 'https://empire.goodgamestudios.com'
       }
     });
 
     const timerTimeout = setTimeout(() => {
-      console.log(`[TIMEOUT - 7s] O servidor ${url} não respondeu ao handshake.`);
+      console.log(`[TIMEOUT - 7s] Servidor ${url} não respondeu.`);
       ws.terminate();
     }, 8000);
 
     ws.on('open', () => {
       clearTimeout(timerTimeout);
-      console.log(`[WS SUCESSO] Conectado em ${url}! Enviando comando login...`);
+      console.log(`[WS SUCESSO] Conectado com êxito em ${url}! Enviando autenticação...`);
       contasAtivas[usuario] = { usuario, mundo, conectado: true, ws };
 
       const payload = { cmd: 'login', user: usuario, pass: senha, world: mundo || 'HANT1' };
@@ -60,23 +61,22 @@ app.post('/api/conectar', (req, res) => {
       console.error(`[ERRO WS - ${url}]:`, err.message);
     });
 
-    ws.on('close', (code, reason) => {
+    ws.on('close', (code) => {
       clearTimeout(timerTimeout);
       console.log(`[SOCKET FECHADO - ${url}] Código: ${code}`);
 
-      // Tenta o próximo endpoint se o atual falhou
       endpointIndex++;
       if (endpointIndex < ENDPOINTS.length) {
-        console.log(`[FALLBACK] Tentando próximo endpoint...`);
+        console.log(`[FALLBACK DOMÍNIO] Tentando próximo host oficial...`);
         tentarConectar(ENDPOINTS[endpointIndex]);
       } else {
-        console.log(`[FIM] Todos os endpoints do jogo falharam. O IP pode estar alterado ou inacessível via IP direto.`);
+        console.log(`[FIM] Todos os domínios falharam. Necessária captura de pacotes (HTTP/HTTPS Auth API) para o HANT1.`);
       }
     });
   }
 
   tentarConectar(ENDPOINTS[0]);
-  res.json({ mensagem: `Tentativa iniciada. Acompanhe as respostas em tempo real nos logs do Render.` });
+  res.json({ mensagem: `Tentativa iniciada nos domínios oficiais. Acompanhe os logs no Render.` });
 });
 
 const PORT = process.env.PORT || 10000;
