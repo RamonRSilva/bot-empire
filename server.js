@@ -12,7 +12,6 @@ const contasAtivas = {};
 const TARGET_HOST = 'e4k-live-mz-cn1-hant1-game.goodgamestudios.com';
 const TARGET_PORT = 443;
 
-// Rota de Health-Check / Ping para manter o Render acordado
 app.get('/ping', (req, res) => {
   res.status(200).send('Bot Empire Online & Active');
 });
@@ -24,16 +23,13 @@ app.get('/', (req, res) => {
 function processarMensagem(resposta, socket, user, pass, faseState) {
   console.log(`[RESPOSTA BRUTA - ${user}]:`, resposta);
 
-  // Passo 1 -> Passo 2: Confirmar apiOK e enviar credenciais
   if (faseState.fase === 1 && resposta.includes('apiOK')) {
     faseState.fase = 2;
     console.log(`[PASSO 2] apiOK confirmado! Enviando credenciais XML para ${user}...`);
     
-    // 1. Enviar login XML do SmartFoxServer padrão
     const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${pass}" /></login></body></msg>\x00`;
     socket.write(xmlLogin);
 
-    // 2. Enviar extensão XT de autenticação
     setTimeout(() => {
       const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${user}%${pass}%\x00`;
       socket.write(xtLogin);
@@ -43,7 +39,6 @@ function processarMensagem(resposta, socket, user, pass, faseState) {
     return;
   }
 
-  // Analisar resposta após o envio do login
   if (faseState.fase === 2) {
     if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('action="logOK"')) {
       faseState.fase = 3;
@@ -60,7 +55,6 @@ function processarMensagem(resposta, socket, user, pass, faseState) {
     }
   }
 
-  // Passo 4: Monitorar pacotes de dados do jogo (%xt%) após o login completo
   if (faseState.fase === 3) {
     if (resposta.includes('%xt%')) {
       console.log(`[DADOS DO JOGO - ${user}] Pacote XT capturado com sucesso.`);
@@ -77,14 +71,11 @@ app.post('/api/conectar', (req, res) => {
 
   console.log(`[TCP SOCK] A preparar nova conexão para ${usuario}...`);
 
-  // Destruir e limpar qualquer socket anterior completamente antes de abrir um novo
   if (contasAtivas[usuario]) {
     if (contasAtivas[usuario].socket) {
       try {
         contasAtivas[usuario].socket.destroy();
-      } catch (e) {
-        // Ignora erros caso já esteja fechado
-      }
+      } catch (e) {}
     }
     delete contasAtivas[usuario];
   }
@@ -99,7 +90,6 @@ app.post('/api/conectar', (req, res) => {
     console.log(`[TCP CONECTADO] Socket limpo e ativo com ${TARGET_HOST}:${TARGET_PORT}`);
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
-    // Passo 1: Handshake verChk
     faseState.fase = 1;
     const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
     client.write(xmlHandshake);
@@ -130,7 +120,27 @@ app.post('/api/conectar', (req, res) => {
     if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
   });
 
-  res.json({ mensagem: `Conexão reiniciada com sucesso para ${usuario}.` });
+  res.json({ mensagem: `Conexão iniciada com sucesso para ${usuario}.` });
+});
+
+// Rota funcional para Desconectar
+app.post('/api/desconectar', (req, res) => {
+  const { usuario } = req.body;
+
+  if (!usuario || !contasAtivas[usuario]) {
+    return res.status(404).json({ erro: 'Nenhuma conexão ativa encontrada para este utilizador.' });
+  }
+
+  console.log(`[TCP SOCK] A encerrar conexão a pedido do painel para ${usuario}...`);
+
+  if (contasAtivas[usuario].socket) {
+    try {
+      contasAtivas[usuario].socket.destroy();
+    } catch (e) {}
+  }
+  delete contasAtivas[usuario];
+
+  res.json({ mensagem: `Bot desconectado com sucesso para ${usuario}.` });
 });
 
 const PORT = process.env.PORT || 10000;
