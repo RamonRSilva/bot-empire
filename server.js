@@ -22,42 +22,41 @@ app.get('/', (req, res) => {
 });
 
 function processarMensagem(resposta, socket, user, pass, faseState) {
-  console.log(`[RESPOSTA RECEBIDA - ${user}]:`, resposta);
+  console.log(`[RESPOSTA BRUTA - ${user}]:`, resposta);
 
-  // Passo 1 -> Passo 2: Confirmar apiOK e enviar credenciais (XML + XT)
+  // Passo 1 -> Passo 2: Confirmar apiOK e enviar credenciais
   if (faseState.fase === 1 && resposta.includes('apiOK')) {
     faseState.fase = 2;
-    console.log(`[PASSO 2] apiOK confirmado! Enviando credenciais de login para ${user}...`);
+    console.log(`[PASSO 2] apiOK confirmado! Enviando credenciais XML para ${user}...`);
     
-    // 1. Enviar login XML do SmartFoxServer
+    // 1. Enviar login XML do SmartFoxServer padrão
     const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${pass}" /></login></body></msg>\x00`;
     socket.write(xmlLogin);
 
-    // 2. Enviar o pacote de extensão XT exigido pelo Goodgame Studios
+    // 2. Enviar extensão XT de autenticação
     setTimeout(() => {
       const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${user}%${pass}%\x00`;
       socket.write(xtLogin);
-      console.log(`[PASSO 2.1] Pacote de extensão XT de login enviado.`);
+      console.log(`[PASSO 2.1] Pacote XT de login enviado. Aguardando validação...`);
     }, 500);
 
     return;
   }
 
-  // Passo 2 -> Passo 3: Tratar resposta de confirmação de login
+  // Analisar resposta após o envio do login
   if (faseState.fase === 2) {
-    if (resposta.includes('action="logOK"') || resposta.includes('logOK') || resposta.includes('%xt%login')) {
+    if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('action="logOK"')) {
       faseState.fase = 3;
-      console.log(`[PASSO 3] Login aceito pelo servidor para ${user}! Entrando no mundo do jogo...`);
+      console.log(`[SUCESSO] Login autenticado com êxito para ${user}!`);
       
-      // Enviar comando de sincronização inicial após 1 segundo
       setTimeout(() => {
         const joinGame = `%xt%e4k-live-mz-cn1-hant1%cmd%1%{"cmd":"k","param":{}}%\x00`;
         socket.write(joinGame);
-        console.log(`[PASSO 3.1] Comando de sincronização inicial enviado.`);
+        console.log(`[PASSO 3] Comando de sincronização enviado.`);
       }, 1000);
 
-    } else if (resposta.includes('action="logKO"') || resposta.includes('error')) {
-      console.error(`[ERRO DE LOGIN] Falha de autenticação para ${user}. Verifique o utilizador e a palavra-passe.`);
+    } else if (resposta.includes('logKO') || resposta.includes('error') || resposta.includes('ko') || resposta.includes('action="logKO"')) {
+      console.error(`[FALHA DE AUTENTICAÇÃO] O servidor rejeitou as credenciais para ${user}. Resposta:`, resposta);
     }
   }
 
@@ -76,10 +75,18 @@ app.post('/api/conectar', (req, res) => {
     return res.status(400).json({ erro: 'Nome do jogador e Senha são obrigatórios.' });
   }
 
-  console.log(`[TCP SOCK] Disparando conexão para ${usuario}...`);
+  console.log(`[TCP SOCK] A preparar nova conexão para ${usuario}...`);
 
-  if (contasAtivas[usuario] && contasAtivas[usuario].socket) {
-    contasAtivas[usuario].socket.destroy();
+  // Destruir e limpar qualquer socket anterior completamente antes de abrir um novo
+  if (contasAtivas[usuario]) {
+    if (contasAtivas[usuario].socket) {
+      try {
+        contasAtivas[usuario].socket.destroy();
+      } catch (e) {
+        // Ignora erros caso já esteja fechado
+      }
+    }
+    delete contasAtivas[usuario];
   }
 
   const client = new net.Socket();
@@ -89,7 +96,7 @@ app.post('/api/conectar', (req, res) => {
   client.setKeepAlive(true, 10000);
 
   client.connect(TARGET_PORT, TARGET_HOST, () => {
-    console.log(`[TCP CONECTADO] Socket ativo com ${TARGET_HOST}:${TARGET_PORT}`);
+    console.log(`[TCP CONECTADO] Socket limpo e ativo com ${TARGET_HOST}:${TARGET_PORT}`);
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
     // Passo 1: Handshake verChk
@@ -119,11 +126,11 @@ app.post('/api/conectar', (req, res) => {
   });
 
   client.on('close', () => {
-    console.log(`[SOCKET FECHADO - ${usuario}] Conexão encerrada.`);
+    console.log(`[SOCKET FECHADO - ${usuario}] Conexão limpa e encerrada.`);
     if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
   });
 
-  res.json({ mensagem: `Processo iniciado para ${usuario}. Acompanhe os logs no Render.` });
+  res.json({ mensagem: `Conexão reiniciada com sucesso para ${usuario}.` });
 });
 
 const PORT = process.env.PORT || 10000;
