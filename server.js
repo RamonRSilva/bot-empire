@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const net = require('net');
 const path = require('path');
+const crypto = require('crypto'); // Biblioteca nativa do Node.js para MD5
 
 const app = express();
 app.use(express.json());
@@ -20,20 +21,22 @@ app.get('/', (req, res) => {
   res.status(200).send('Servidor do Bot Empire Four Kingdoms a funcionar corretamente.');
 });
 
-function processarMensagem(resposta, socket, user, pass, faseState) {
+function processarMensagem(resposta, socket, user, passMd5, faseState) {
   console.log(`[RESPOSTA BRUTA - ${user}]:`, resposta);
 
   if (faseState.fase === 1 && resposta.includes('apiOK')) {
     faseState.fase = 2;
-    console.log(`[PASSO 2] apiOK confirmado! Enviando credenciais XML para ${user}...`);
+    console.log(`[PASSO 2] apiOK confirmado! Enviando credenciais com hash MD5 para ${user}...`);
     
-    const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${pass}" /></login></body></msg>\x00`;
+    // 1. Enviar login XML com a senha em MD5
+    const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${passMd5}" /></login></body></msg>\x00`;
     socket.write(xmlLogin);
 
+    // 2. Enviar extensão XT de autenticação com a senha em MD5
     setTimeout(() => {
-      const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${user}%${pass}%\x00`;
+      const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${user}%${passMd5}%\x00`;
       socket.write(xtLogin);
-      console.log(`[PASSO 2.1] Pacote XT de login enviado. Aguardando validação...`);
+      console.log(`[PASSO 2.1] Pacote XT de login MD5 enviado. Aguardando validação...`);
     }, 500);
 
     return;
@@ -68,6 +71,9 @@ app.post('/api/conectar', (req, res) => {
   if (!usuario || !senha) {
     return res.status(400).json({ erro: 'Nome do jogador e Senha são obrigatórios.' });
   }
+
+  // Converter a senha para hash MD5 (padrão exigido por muitos servidores SFS)
+  const senhaMd5 = crypto.createHash('md5').update(senha).digest('hex');
 
   console.log(`[TCP SOCK] A preparar nova conexão para ${usuario}...`);
 
@@ -105,7 +111,7 @@ app.post('/api/conectar', (req, res) => {
       bufferAcumulado = bufferAcumulado.substring(index + 1);
 
       if (mensagem.trim().length > 0) {
-        processarMensagem(mensagem, client, usuario, senha, faseState);
+        processarMensagem(mensagem, client, usuario, senhaMd5, faseState);
       }
       index = bufferAcumulado.indexOf('\x00');
     }
@@ -123,7 +129,6 @@ app.post('/api/conectar', (req, res) => {
   res.json({ mensagem: `Conexão iniciada com sucesso para ${usuario}.` });
 });
 
-// Rota funcional para Desconectar
 app.post('/api/desconectar', (req, res) => {
   const { usuario } = req.body;
 
