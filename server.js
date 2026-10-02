@@ -12,6 +12,33 @@ const contasAtivas = {};
 const TARGET_HOST = 'e4k-live-mz-cn1-hant1-game.goodgamestudios.com';
 const TARGET_PORT = 443;
 
+function processarMensagem(resposta, socket, user, pass, faseState) {
+  console.log(`[RESPOSTA RECEBIDA - ${user}]:`, resposta);
+
+  // Passo 2: Confirmar apiOK e enviar requisição de Login em XML
+  if (faseState.fase === 1 && resposta.includes('apiOK')) {
+    faseState.fase = 2;
+    console.log(`[PASSO 2] apiOK confirmado! Enviando pacote de login XML...`);
+    
+    const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${pass}" /></login></body></msg>\x00`;
+    socket.write(xmlLogin);
+    return;
+  }
+
+  // Passo 3: Tratar resposta de confirmação de login
+  if (faseState.fase === 2) {
+    if (resposta.includes('action="logOK"') || resposta.includes('logOK')) {
+      faseState.fase = 3;
+      console.log(`[PASSO 3] Login aceito pelo servidor! Entrando na sala principal...`);
+      
+      const joinRoom = `%xt%e4k-live-mz-cn1-hant1%cmd%1%{"cmd":"k","param":{}}%\x00`;
+      socket.write(joinRoom);
+    } else if (resposta.includes('action="logKO"') || resposta.includes('error')) {
+      console.error(`[ERRO DE LOGIN] Credenciais inválidas ou erro no formato para ${user}.`);
+    }
+  }
+}
+
 app.post('/api/conectar', (req, res) => {
   const { usuario, senha, mundo } = req.body;
 
@@ -26,10 +53,9 @@ app.post('/api/conectar', (req, res) => {
   }
 
   const client = new net.Socket();
-  let faseLogin = 0;
+  const faseState = { fase: 0 };
   let bufferAcumulado = '';
 
-  // Ativa Keep-Alive TCP para evitar que a conexão seja derrubada por inatividade
   client.setKeepAlive(true, 10000);
 
   client.connect(TARGET_PORT, TARGET_HOST, () => {
@@ -37,7 +63,7 @@ app.post('/api/conectar', (req, res) => {
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
     // Passo 1: Handshake verChk
-    faseLogin = 1;
+    faseState.fase = 1;
     const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
     client.write(xmlHandshake);
     console.log(`[PASSO 1] Handshake verChk enviado.`);
@@ -46,23 +72,13 @@ app.post('/api/conectar', (req, res) => {
   client.on('data', (data) => {
     bufferAcumulado += data.toString('utf-8');
 
-    // Processa pacotes delimitados pelo Byte 0 (\x00)
     let index = bufferAcumulado.indexOf('\x00');
     while (index !== -1) {
       const mensagem = bufferAcumulado.substring(0, index);
       bufferAcumulado = bufferAcumulado.substring(index + 1);
 
       if (mensagem.trim().length > 0) {
-        console.log(`[RESPOSTA CRUA - ${usuario}]:`, mensagem);
-
-        // Passo 2: apiOK confirmado -> Enviar login em XML
-        if (faseLogin === 1 && mensagem.includes('apiOK')) {
-          faseLogin = 2;
-          console.log(`[PASSO 2] apiOK confirmado! Enviando pacote de login XML...`);
-          
-          const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${usuario}" p="${senha}" /></login></body></msg>\x00`;
-          client.write(xmlLogin);
-        }
+        processarMensagem(mensagem, client, usuario, senha, faseState);
       }
       index = bufferAcumulado.indexOf('\x00');
     }
