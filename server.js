@@ -1,6 +1,6 @@
 const express = require('express');
 const http = require('http');
-const net = require('net');
+const tls = require('tls');
 const path = require('path');
 
 const app = express();
@@ -19,20 +19,21 @@ app.post('/api/conectar', (req, res) => {
     return res.status(400).json({ erro: 'Nome do jogador e Senha são obrigatórios.' });
   }
 
-  console.log(`[TCP SOCK] Disparando conexão v16 para ${usuario}...`);
+  console.log(`[TLS SOCK] Iniciando conexão segura para ${usuario}...`);
 
   if (contasAtivas[usuario] && contasAtivas[usuario].socket) {
     contasAtivas[usuario].socket.destroy();
   }
 
-  const client = new net.Socket();
+  let bufferAcumulado = '';
   let faseLogin = 0;
 
-  client.connect(TARGET_PORT, TARGET_HOST, () => {
-    console.log(`[TCP CONECTADO] Socket ativo com ${TARGET_HOST}:${TARGET_PORT}`);
+  // Uso do TLS para porta 443
+  const client = tls.connect(TARGET_PORT, TARGET_HOST, { rejectUnauthorized: false }, () => {
+    console.log(`[TLS CONECTADO] Conexão segura estabelecida com ${TARGET_HOST}:${TARGET_PORT}`);
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
-    // Passo 1: Handshake
+    // Passo 1: Handshake verChk
     faseLogin = 1;
     const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
     client.write(xmlHandshake);
@@ -40,29 +41,36 @@ app.post('/api/conectar', (req, res) => {
   });
 
   client.on('data', (data) => {
-    const resposta = data.toString();
-    console.log(`[RESPOSTA CRUA - ${usuario}]:`, resposta);
+    bufferAcumulado += data.toString('utf-8');
 
-    // Passo 2: apiOK recebido -> Enviar login com extensão do jogo (%xt%)
-    if (faseLogin === 1 && resposta.includes('apiOK')) {
-      faseLogin = 2;
-      console.log(`[PASSO 2] apiOK confirmado! Enviando pacote de login de extensão...`);
-      
-      // Formato XML de login SmartFoxServer com zona de jogo
-      const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${usuario}" p="${senha}" /></login></body></msg>\x00`;
-      client.write(xmlLogin);
+    // Processa mensagens delimitadas por \x00 (Byte 0)
+    let index = bufferAcumulado.indexOf('\x00');
+    while (index !== -1) {
+      const mensagem = bufferAcumulado.substring(0, index);
+      bufferAcumulado = bufferAcumulado.substring(index + 1);
 
-      // Enviar também formato de extensão %xt% caso o servidor use extensão customizada
-      setTimeout(() => {
-        const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${usuario}%${senha}%\x00`;
-        client.write(xtLogin);
-        console.log(`[PASSO 2.1] Pacote de extensão XT enviado.`);
-      }, 500);
+      if (mensagem.trim().length > 0) {
+        processarMensagem(mensagem, client, usuario, senha);
+      }
+      index = bufferAcumulado.indexOf('\x00');
     }
   });
 
+  function processarMensagem(resposta, socket, user, pass) {
+    console.log(`[RESPOSTA RECEBIDA - ${user}]:`, resposta);
+
+    // Passo 2: Confirmar apiOK e enviar requisição de Login em XML
+    if (faseLogin === 1 && resposta.includes('apiOK')) {
+      faseLogin = 2;
+      console.log(`[PASSO 2] apiOK recebido. Enviando pacote de Login XML...`);
+      
+      const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${pass}" /></login></body></msg>\x00`;
+      socket.write(xmlLogin);
+    }
+  }
+
   client.on('error', (err) => {
-    console.error(`[ERRO TCP - ${usuario}]:`, err.message);
+    console.error(`[ERRO TLS - ${usuario}]:`, err.message);
   });
 
   client.on('close', () => {
@@ -70,7 +78,7 @@ app.post('/api/conectar', (req, res) => {
     if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
   });
 
-  res.json({ mensagem: `Processo v16 iniciado para ${usuario}. Acompanhe os logs no Render.` });
+  res.json({ mensagem: `Processo iniciado para ${usuario}. Acompanhe os logs no Render.` });
 });
 
 const PORT = process.env.PORT || 10000;
