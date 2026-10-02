@@ -9,13 +9,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const contasAtivas = {};
 
-// Domínios oficiais do jogo Empire: Four Kingdoms (evita bloqueio por IP direto)
-const ENDPOINTS = [
-  'wss://hant1.goodgamestudios.com:443',
-  'wss://hant1-live.goodgamestudios.com:443',
-  'wss://e4k-hant1.goodgamestudios.com:443',
-  'ws://hant1.goodgamestudios.com:8080'
-];
+// Domínio exato extraído da captura PCAPdroid para o servidor HANT1
+const ENDPOINT_HANT1 = 'wss://e4k-live-mz-cn1-hant1-game.goodgamestudios.com:443';
 
 app.post('/api/conectar', (req, res) => {
   const { usuario, senha, mundo } = req.body;
@@ -24,59 +19,43 @@ app.post('/api/conectar', (req, res) => {
     return res.status(400).json({ erro: 'Nome do jogador e Senha são obrigatórios.' });
   }
 
-  let endpointIndex = 0;
+  console.log(`[LOGIN EXATO] Conectando ${usuario} em ${ENDPOINT_HANT1}...`);
 
-  function tentarConectar(url) {
-    console.log(`[TENTATIVA ${endpointIndex + 1}] Conectando ${usuario} em ${url}...`);
+  const ws = new WebSocket(ENDPOINT_HANT1, {
+    rejectUnauthorized: false,
+    handshakeTimeout: 10000,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Android; Mobile)',
+      'Origin': 'https://empire.goodgamestudios.com'
+    }
+  });
 
-    const ws = new WebSocket(url, {
-      rejectUnauthorized: false,
-      handshakeTimeout: 7000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Android; Mobile; rv:109.0) Gecko/109.0 Firefox/115.0',
-        'Origin': 'https://empire.goodgamestudios.com'
-      }
-    });
+  contasAtivas[usuario] = { usuario, mundo, conectado: false, ws };
 
-    const timerTimeout = setTimeout(() => {
-      console.log(`[TIMEOUT - 7s] Servidor ${url} não respondeu.`);
-      ws.terminate();
-    }, 8000);
+  ws.on('open', () => {
+    console.log(`[WS CONECTADO] Sucesso! Conexão estabelecida com ${ENDPOINT_HANT1}`);
+    contasAtivas[usuario].conectado = true;
 
-    ws.on('open', () => {
-      clearTimeout(timerTimeout);
-      console.log(`[WS SUCESSO] Conectado com êxito em ${url}! Enviando autenticação...`);
-      contasAtivas[usuario] = { usuario, mundo, conectado: true, ws };
+    // Handshake inicial do SmartFoxServer
+    const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>';
+    ws.send(xmlHandshake);
+    console.log(`[ENVIADO] Handshake XML enviado com sucesso.`);
+  });
 
-      const payload = { cmd: 'login', user: usuario, pass: senha, world: mundo || 'HANT1' };
-      ws.send(JSON.stringify(payload));
-    });
+  ws.on('message', (data) => {
+    console.log(`[RESPOSTA JOGO - ${usuario}]:`, data.toString());
+  });
 
-    ws.on('message', (data) => {
-      console.log(`[RESPOSTA JOGO - ${usuario}]:`, data.toString());
-    });
+  ws.on('error', (err) => {
+    console.error(`[ERRO WS - ${usuario}]:`, err.message);
+  });
 
-    ws.on('error', (err) => {
-      clearTimeout(timerTimeout);
-      console.error(`[ERRO WS - ${url}]:`, err.message);
-    });
+  ws.on('close', (code, reason) => {
+    console.log(`[SOCKET FECHADO - ${usuario}] Código: ${code} | Razão: ${reason.toString() || 'Nenhuma'}`);
+    if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
+  });
 
-    ws.on('close', (code) => {
-      clearTimeout(timerTimeout);
-      console.log(`[SOCKET FECHADO - ${url}] Código: ${code}`);
-
-      endpointIndex++;
-      if (endpointIndex < ENDPOINTS.length) {
-        console.log(`[FALLBACK DOMÍNIO] Tentando próximo host oficial...`);
-        tentarConectar(ENDPOINTS[endpointIndex]);
-      } else {
-        console.log(`[FIM] Todos os domínios falharam. Necessária captura de pacotes (HTTP/HTTPS Auth API) para o HANT1.`);
-      }
-    });
-  }
-
-  tentarConectar(ENDPOINTS[0]);
-  res.json({ mensagem: `Tentativa iniciada nos domínios oficiais. Acompanhe os logs no Render.` });
+  res.json({ mensagem: `Tentativa iniciada no domínio oficial HANT1. Acompanhe os logs no Render.` });
 });
 
 const PORT = process.env.PORT || 10000;
