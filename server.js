@@ -1,6 +1,6 @@
 const express = require('express');
 const http = require('http');
-const tls = require('tls');
+const net = require('net');
 const path = require('path');
 
 const app = express();
@@ -19,18 +19,21 @@ app.post('/api/conectar', (req, res) => {
     return res.status(400).json({ erro: 'Nome do jogador e Senha são obrigatórios.' });
   }
 
-  console.log(`[TLS SOCK] Iniciando conexão segura para ${usuario}...`);
+  console.log(`[TCP SOCK] Disparando conexão para ${usuario}...`);
 
   if (contasAtivas[usuario] && contasAtivas[usuario].socket) {
     contasAtivas[usuario].socket.destroy();
   }
 
-  let bufferAcumulado = '';
+  const client = new net.Socket();
   let faseLogin = 0;
+  let bufferAcumulado = '';
 
-  // Uso do TLS para porta 443
-  const client = tls.connect(TARGET_PORT, TARGET_HOST, { rejectUnauthorized: false }, () => {
-    console.log(`[TLS CONECTADO] Conexão segura estabelecida com ${TARGET_HOST}:${TARGET_PORT}`);
+  // Ativa Keep-Alive TCP para evitar que a conexão seja derrubada por inatividade
+  client.setKeepAlive(true, 10000);
+
+  client.connect(TARGET_PORT, TARGET_HOST, () => {
+    console.log(`[TCP CONECTADO] Socket ativo com ${TARGET_HOST}:${TARGET_PORT}`);
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
     // Passo 1: Handshake verChk
@@ -43,34 +46,30 @@ app.post('/api/conectar', (req, res) => {
   client.on('data', (data) => {
     bufferAcumulado += data.toString('utf-8');
 
-    // Processa mensagens delimitadas por \x00 (Byte 0)
+    // Processa pacotes delimitados pelo Byte 0 (\x00)
     let index = bufferAcumulado.indexOf('\x00');
     while (index !== -1) {
       const mensagem = bufferAcumulado.substring(0, index);
       bufferAcumulado = bufferAcumulado.substring(index + 1);
 
       if (mensagem.trim().length > 0) {
-        processarMensagem(mensagem, client, usuario, senha);
+        console.log(`[RESPOSTA CRUA - ${usuario}]:`, mensagem);
+
+        // Passo 2: apiOK confirmado -> Enviar login em XML
+        if (faseLogin === 1 && mensagem.includes('apiOK')) {
+          faseLogin = 2;
+          console.log(`[PASSO 2] apiOK confirmado! Enviando pacote de login XML...`);
+          
+          const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${usuario}" p="${senha}" /></login></body></msg>\x00`;
+          client.write(xmlLogin);
+        }
       }
       index = bufferAcumulado.indexOf('\x00');
     }
   });
 
-  function processarMensagem(resposta, socket, user, pass) {
-    console.log(`[RESPOSTA RECEBIDA - ${user}]:`, resposta);
-
-    // Passo 2: Confirmar apiOK e enviar requisição de Login em XML
-    if (faseLogin === 1 && resposta.includes('apiOK')) {
-      faseLogin = 2;
-      console.log(`[PASSO 2] apiOK recebido. Enviando pacote de Login XML...`);
-      
-      const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${pass}" /></login></body></msg>\x00`;
-      socket.write(xmlLogin);
-    }
-  }
-
   client.on('error', (err) => {
-    console.error(`[ERRO TLS - ${usuario}]:`, err.message);
+    console.error(`[ERRO TCP - ${usuario}]:`, err.message);
   });
 
   client.on('close', () => {
