@@ -1,6 +1,6 @@
 const express = require('express');
 const http = require('http');
-const net = require('net');
+const tls = require('tls');
 const path = require('path');
 const crypto = require('crypto');
 
@@ -10,7 +10,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const contasAtivas = {};
 
-// Mapeamento dos mundos e os seus respetivos hosts oficiais
 const MUNDOS_MAP = {
   'cn1': { host: 'e4k-live-mz-cn1-hant1-game.goodgamestudios.com', ip: '52.77.8.40', zona: 'e4k-live-mz-cn1-hant1' },
   'int1': { host: 'e4k-live-int1-game.goodgamestudios.com', ip: null, zona: 'e4k-live-int1' },
@@ -25,45 +24,6 @@ app.get('/', (req, res) => {
   res.status(200).send('Servidor do Bot Empire Four Kingdoms a funcionar corretamente.');
 });
 
-function processarMensagem(resposta, socket, user, passMd5, zona, faseState) {
-  // Auditoria total: imprime tudo o que chega do servidor após o passo 2
-  console.log(`[AUDITORIA SERVIDOR - ${user} (Fase ${faseState.fase})]:`, JSON.stringify(resposta));
-
-  if (faseState.fase === 1 && (resposta.includes('apiOK') || resposta.includes('action="apiOK"'))) {
-    faseState.fase = 2;
-    console.log(`[PASSO 2] apiOK confirmado para ${zona}! A enviar login XML...`);
-    
-    // 1. Login XML Padrão
-    const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="${zona}"><body u="${user}" p="${passMd5}" /></login></body></msg>\x00`;
-    socket.write(xmlLogin);
-
-    // 2. Pacote XT de login padrão do SFS
-    setTimeout(() => {
-      const xtLogin = `%xt%${zona}%login%1%${user}%${passMd5}%\x00`;
-      socket.write(xtLogin);
-      console.log(`[PASSO 2.1] Pacote XT de login enviado para a zona ${zona}. A escutar resposta completa...`);
-    }, 600);
-
-    return;
-  }
-
-  // Se já estamos na fase 2, qualquer retorno do servidor será avaliado aqui
-  if (faseState.fase === 2) {
-    if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('%xt%login%0%') || resposta.includes('action="logOK"') || resposta.includes('ok')) {
-      faseState.fase = 3;
-      console.log(`[SUCESSO] O servidor autenticou a conta ${user} com êxito!`);
-      
-      setTimeout(() => {
-        const joinGame = `%xt%${zona}%cmd%1%{"cmd":"k","param":{}}%\x00`;
-        socket.write(joinGame);
-        console.log(`[PASSO 3] Comando de sincronização inicial enviado.`);
-      }, 1000);
-    } else if (resposta.includes('logKO') || resposta.includes('error') || resposta.includes('ko')) {
-      console.error(`[FALHA DE LOGIN] O servidor rejeitou as credenciais para ${user}:`, resposta);
-    }
-  }
-}
-
 app.post('/api/conectar', (req, res) => {
   const { usuario, senha, mundo } = req.body;
 
@@ -74,7 +34,7 @@ app.post('/api/conectar', (req, res) => {
   const infoMundo = MUNDOS_MAP[mundo] || MUNDOS_MAP['cn1'];
   const senhaMd5 = crypto.createHash('md5').update(senha).digest('hex');
 
-  console.log(`[TCP SOCK] A ligar ${usuario} ao mundo ${mundo} (${infoMundo.host})...`);
+  console.log(`[AUDITORIA TLS] A iniciar diagnóstico completo para ${usuario} no mundo ${mundo}...`);
 
   if (contasAtivas[usuario]) {
     if (contasAtivas[usuario].socket) {
@@ -83,50 +43,60 @@ app.post('/api/conectar', (req, res) => {
     delete contasAtivas[usuario];
   }
 
-  const client = new net.Socket();
-  const faseState = { fase: 0 };
-  let bufferAcumulado = '';
+  const targetIP = infoMundo.ip || infoMundo.host;
 
-  client.setKeepAlive(true, 10000);
-
-  const targetDest = infoMundo.ip || infoMundo.host;
-
-  client.connect(443, targetDest, () => {
-    console.log(`[TCP CONECTADO] Ligado a ${targetDest}:443`);
+  // Ligação TLS direta ao IP com SNI
+  const client = tls.connect({
+    host: targetIP,
+    port: 443,
+    servername: infoMundo.host,
+    rejectUnauthorized: false
+  }, () => {
+    console.log(`[TLS CONECTADO] Canal seguro aberto com ${targetIP}:443. A aguardar dados do servidor...`);
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
-    faseState.fase = 1;
-    const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
-    client.write(xmlHandshake);
-    console.log(`[PASSO 1] Handshake verChk enviado.`);
+    // Aguardar 1 segundo após a conexão segura para ver se o servidor envia algo espontaneamente
+    setTimeout(() => {
+      console.log(`[PASSO 1] A enviar handshake verChk...`);
+      const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
+      client.write(xmlHandshake);
+    }, 1000);
   });
 
   client.on('data', (data) => {
-    // Log bruto do buffer recebido antes de quebrar por \x00
-    bufferAcumulado += data.toString('utf-8');
+    // Imprimir o formato bruto (Hexadecimal e Texto) de tudo o que o servidor envia
+    console.log(`[DADOS RECEBIDOS - ${usuario}] Bytes (${data.length}):`, data.toString('hex'));
+    console.log(`[DADOS RECEBIDOS - ${usuario}] Texto:`, data.toString('utf-8'));
 
-    let index = bufferAcumulado.indexOf('\x00');
-    while (index !== -1) {
-      const mensagem = bufferAcumulado.substring(0, index);
-      bufferAcumulado = bufferAcumulado.substring(index + 1);
+    const respostaTexto = data.toString('utf-8');
 
-      if (mensagem.trim().length > 0) {
-        processarMensagem(mensagem, client, usuario, senhaMd5, infoMundo.zona, faseState);
-      }
-      index = bufferAcumulado.indexOf('\x00');
+    // Se o servidor responder com apiOK, enviamos o login de forma controlada
+    if (respostaTexto.includes('apiOK')) {
+      console.log(`[PASSO 2] apiOK detetado! A aguardar 1 segundo para enviar credenciais...`);
+      setTimeout(() => {
+        const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="${infoMundo.zona}"><body u="${usuario}" p="${senhaMd5}" /></login></body></msg>\x00`;
+        client.write(xmlLogin);
+        console.log(`[PASSO 2.1] Login XML enviado.`);
+      }, 1000);
+
+      setTimeout(() => {
+        const xtLogin = `%xt%${infoMundo.zona}%login%1%${usuario}%${senhaMd5}%\x00`;
+        client.write(xtLogin);
+        console.log(`[PASSO 2.2] Pacote XT enviado.`);
+      }, 1800);
     }
   });
 
   client.on('error', (err) => {
-    console.error(`[ERRO TCP - ${usuario}]:`, err.message);
+    console.error(`[ERRO TLS - ${usuario}]:`, err.message);
   });
 
   client.on('close', () => {
-    console.log(`[SOCKET FECHADO - ${usuario}] Ligação encerrada pelo servidor.`);
+    console.log(`[SOCKET FECHADO - ${usuario}] O servidor encerrou a ligação.`);
     if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
   });
 
-  res.json({ mensagem: `Ligação iniciada para ${usuario} no mundo ${mundo}.` });
+  res.json({ mensagem: `Diagnóstico TLS iniciado para ${usuario}.` });
 });
 
 app.post('/api/desconectar', (req, res) => {
