@@ -26,39 +26,40 @@ app.get('/', (req, res) => {
 });
 
 function processarMensagem(resposta, socket, user, passMd5, zona, faseState) {
-  console.log(`[RESPOSTA TCP - ${user}]:`, resposta);
+  // Auditoria total: imprime tudo o que chega do servidor após o passo 2
+  console.log(`[AUDITORIA SERVIDOR - ${user} (Fase ${faseState.fase})]:`, JSON.stringify(resposta));
 
-  // Assim que recebe o apiOK do verChk, envia o login imediatamente
   if (faseState.fase === 1 && (resposta.includes('apiOK') || resposta.includes('action="apiOK"'))) {
     faseState.fase = 2;
-    console.log(`[PASSO 2] apiOK confirmado para ${zona}! A enviar credenciais...`);
+    console.log(`[PASSO 2] apiOK confirmado para ${zona}! A enviar login XML...`);
     
-    // Envio unificado do login XML
+    // 1. Login XML Padrão
     const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="${zona}"><body u="${user}" p="${passMd5}" /></login></body></msg>\x00`;
     socket.write(xmlLogin);
 
-    // Envio do pacote XT complementar
+    // 2. Pacote XT de login padrão do SFS
     setTimeout(() => {
-      const xtLogin = `%xt%${zona}%login%1%${user}%${passMd5}%en%166%\x00`;
+      const xtLogin = `%xt%${zona}%login%1%${user}%${passMd5}%\x00`;
       socket.write(xtLogin);
-      console.log(`[PASSO 2.1] Pacote XT enviado para a zona ${zona}.`);
-    }, 500);
+      console.log(`[PASSO 2.1] Pacote XT de login enviado para a zona ${zona}. A escutar resposta completa...`);
+    }, 600);
 
     return;
   }
 
+  // Se já estamos na fase 2, qualquer retorno do servidor será avaliado aqui
   if (faseState.fase === 2) {
-    if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('%xt%login%0%') || resposta.includes('action="logOK"')) {
+    if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('%xt%login%0%') || resposta.includes('action="logOK"') || resposta.includes('ok')) {
       faseState.fase = 3;
-      console.log(`[SUCESSO] Login autenticado com êxito para ${user}!`);
+      console.log(`[SUCESSO] O servidor autenticou a conta ${user} com êxito!`);
       
       setTimeout(() => {
         const joinGame = `%xt%${zona}%cmd%1%{"cmd":"k","param":{}}%\x00`;
         socket.write(joinGame);
-        console.log(`[PASSO 3] Comando de sincronização enviado.`);
+        console.log(`[PASSO 3] Comando de sincronização inicial enviado.`);
       }, 1000);
     } else if (resposta.includes('logKO') || resposta.includes('error') || resposta.includes('ko')) {
-      console.error(`[FALHA] O servidor rejeitou as credenciais para ${user}:`, resposta);
+      console.error(`[FALHA DE LOGIN] O servidor rejeitou as credenciais para ${user}:`, resposta);
     }
   }
 }
@@ -95,13 +96,13 @@ app.post('/api/conectar', (req, res) => {
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
     faseState.fase = 1;
-    // Handshake verChk direto que sabemos que funciona e retorna o apiOK
     const xmlHandshake = '<msg t="sys"><body action="verChk" r="0"><ver v="166" /></body></msg>\x00';
     client.write(xmlHandshake);
     console.log(`[PASSO 1] Handshake verChk enviado.`);
   });
 
   client.on('data', (data) => {
+    // Log bruto do buffer recebido antes de quebrar por \x00
     bufferAcumulado += data.toString('utf-8');
 
     let index = bufferAcumulado.indexOf('\x00');
@@ -121,7 +122,7 @@ app.post('/api/conectar', (req, res) => {
   });
 
   client.on('close', () => {
-    console.log(`[SOCKET FECHADO - ${usuario}] Ligação encerrada.`);
+    console.log(`[SOCKET FECHADO - ${usuario}] Ligação encerrada pelo servidor.`);
     if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
   });
 
