@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Empire Bot - Gerenciador de Contas</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --bg-main: #0a0e17;
+      --bg-card: #131b2e;
+      --bg-input: #0b111e;
+      --border-color: #1e293b;
+      --primary: #38bdf8;
+      --accent-gold: #f59e0b;
+      --success: #10b981;
+      --danger: #ef4444;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', system-ui, sans-serif; }
+    body { background: var(--bg-main); color: var(--text-main); padding: 16px; display: flex; flex-direction: column; align-items: center; }
+    .container { max-width: 500px; width: 100%; display: flex; flex-direction: column; gap: 16px; }
+
+    header { 
+      background: #131b2e; padding: 18px; border-radius: 14px; border: 1px solid var(--border-color); text-align: center;
+      border-top: 3px solid var(--accent-gold);
+    }
+    header h1 { font-size: 1.3rem; color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+    .card { background: var(--bg-card); padding: 18px; border-radius: 14px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 14px; }
+    .card-title { font-size: 1rem; font-weight: 600; color: #fff; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
+
+    input, select {
+      width: 100%; background: var(--bg-input); border: 1px solid var(--border-color); color: #fff; padding: 12px; border-radius: 8px; font-size: 0.9rem; outline: none;
+    }
+    input:focus, select:focus { border-color: var(--primary); }
+
+    .checkbox-group { display: flex; flex-direction: column; gap: 8px; }
+    .checkbox-item { display: flex; align-items: center; gap: 10px; background: var(--bg-input); padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer; }
+    .checkbox-item input { width: 16px; height: 16px; }
+
+    .btn-submit {
+      background: #0284c7; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+
+    .logs-box { background: #060911; padding: 12px; border-radius: 8px; height: 150px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; color: var(--primary); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1><i class="fa-solid fa-crown" style="color: var(--accent-gold);"></i> Empire Bot - Painel E4K</h1>
+    </header>
+
+    <div class="card">
+      <div class="card-title"><i class="fa-solid fa-right-to-bracket"></i> Alterar / Adicionar Conta</div>
+      
+      <div class="form-group">
+        <label>Nome do Jogador</label>
+        <input type="text" id="accUser" placeholder="Inserir nome do jogador">
+      </div>
+
+      <div class="form-group">
+        <label>Senha</label>
+        <input type="password" id="accPass" placeholder="Inserir senha">
+      </div>
+
+      <div class="form-group">
+        <label>Mundo / Servidor</label>
+        <select id="accMundo">
+          <option value="HANT1">Mundo: HANT 1 (Chinês Tradicional)</option>
+          <option value="BR1">Mundo: Brasil 1 (BR 1)</option>
+          <option value="ES1">Mundo: ES 1</option>
+          <option value="FR1">Mundo: FR 1</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Automações Ativas:</label>
+        <div class="checkbox-group">
+          <label class="checkbox-item"><input type="checkbox" id="autoRecrutar" checked> <span>Recrutar Tropas</span></label>
+          <label class="checkbox-item"><input type="checkbox" id="autoBaroes" checked> <span>Atacar Barões / Torres</span></label>
+          <label class="checkbox-item"><input type="checkbox" id="autoProducao" checked> <span>Produzir Componentes</span></label>
+        </div>
+      </div>
+
+      <button class="btn-submit" onclick="conectarConta()"><i class="fa-solid fa-paper-plane"></i> Enviar & Conectar</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><i class="fa-solid fa-list-check"></i> Contas Conectadas</div>
+      <div id="accountList" style="font-size: 0.85rem; color: var(--text-muted);">Nenhuma conta conectada.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><i class="fa-solid fa-terminal"></i> Terminal</div>
+      <div class="logs-box" id="logsBox">[SISTEMA] Sistema pronto.</div>
+    </div>
+  </div>
+
+  <script>
+    async function conectarConta() {
+      const usuario = document.getElementById('accUser').value;
+      const senha = document.getElementById('accPass').value;
+      const mundo = document.getElementById('accMundo').value;
+
+      if (!usuario || !senha) { alert('Preencha o Nome do jogador e a Senha!'); return; }
+
+      const automacoes = {
+        recrutamento: document.getElementById('autoRecrutar').checked,
+        baroes: document.getElementById('autoBaroes').checked,
+        producao: document.getElementById('autoProducao').checked
+      };
+
+      const logBox = document.getElementById('logsBox');
+      logBox.innerHTML += `<br>[ENVIAR] Tentando login em ${mundo} para: ${usuario}...`;
+
+      try {
+        const res = await fetch('/api/conectar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: `${usuario} (${mundo})`, usuario, senha, mundo, automacoes })
+        });
+        const data = await res.json();
+        logBox.innerHTML += `<br>[RESPOSTA] ${data.mensagem}`;
+      } catch (e) {
+        logBox.innerHTML += `<br>[ERRO] Falha de comunicação.`;
+      }
+    }
+  </script>
+</body>
+</html>
