@@ -1,13 +1,12 @@
 {
-  "name": "bot-empire-hant1",
+  "name": "bot-empire",
   "version": "1.0.0",
-  "description": "Painel Multicontas Bot E4K - Servidor HANT1",
+  "description": "Bot TCP para Empire: Four Kingdoms",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "ws": "^8.13.0"
+    "express": "^4.18.2"
   }
 }
