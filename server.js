@@ -1,6 +1,6 @@
 const express = require('express');
 const http = require('http');
-const net = require('net');
+const tls = require('tls');
 const path = require('path');
 const crypto = require('crypto');
 
@@ -10,6 +10,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const contasAtivas = {};
 
+// IP direto obtido via PCAPdroid e o domínio oficial para SNI
+const TARGET_IP = '52.77.8.40';
 const TARGET_HOST = 'e4k-live-mz-cn1-hant1-game.goodgamestudios.com';
 const TARGET_PORT = 443;
 
@@ -22,41 +24,40 @@ app.get('/', (req, res) => {
 });
 
 function processarMensagem(resposta, socket, user, passMd5, faseState) {
-  console.log(`[RESPOSTA GLOBAL DO SERVIDOR - ${user}]:`, resposta);
+  console.log(`[DADOS DO SERVIDOR - ${user}]:`, resposta);
 
-  // Passo 1: Recebeu o apiOK inicial do SFS
+  // Fase 1: Handshake verChk respondido com apiOK
   if (faseState.fase === 1 && (resposta.includes('apiOK') || resposta.includes('action="apiOK"'))) {
     faseState.fase = 2;
-    console.log(`[PASSO 2] apiOK confirmado! A enviar login XML e XT para ${user}...`);
+    console.log(`[FASE 2] apiOK confirmado no IP oficial! A enviar credenciais para ${user}...`);
     
-    // 1. Login XML Padrão
+    // 1. Enviar login XML com MD5
     const xmlLogin = `<msg t="sys"><body action="login" r="0"><login z="e4k-live-mz-cn1-hant1"><body u="${user}" p="${passMd5}" /></login></body></msg>\x00`;
     socket.write(xmlLogin);
 
-    // 2. Pacote XT de Extensão de Login com parâmetros expandidos (Zona, Versão e Credenciais)
+    // 2. Enviar extensão XT de autenticação
     setTimeout(() => {
-      // Formato expandido: %xt%zona%login%id%usuario%senha%idioma%versao%
       const xtLogin = `%xt%e4k-live-mz-cn1-hant1%login%1%${user}%${passMd5}%en%166%\x00`;
       socket.write(xtLogin);
-      console.log(`[PASSO 2.1] Pacote XT expandido enviado. A monitorizar resposta...`);
-    }, 500);
+      console.log(`[PASSO 2.1] Pacote XT de login enviado.`);
+    }, 800);
 
     return;
   }
 
-  // Passo 2: Analisar qualquer resposta após o envio do login
+  // Fase 2: Analisar resposta após o login
   if (faseState.fase === 2) {
-    if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('action="logOK"') || resposta.includes('%xt%login%0%')) {
+    if (resposta.includes('logOK') || resposta.includes('loginOK') || resposta.includes('%xt%login%0%')) {
       faseState.fase = 3;
       console.log(`[SUCESSO] Login autenticado com êxito para ${user}!`);
       
       setTimeout(() => {
         const joinGame = `%xt%e4k-live-mz-cn1-hant1%cmd%1%{"cmd":"k","param":{}}%\x00`;
         socket.write(joinGame);
-        console.log(`[PASSO 3] Comando de sincronização inicial enviado.`);
+        console.log(`[COMANDO K] Sincronização enviada.`);
       }, 1000);
     } else if (resposta.includes('logKO') || resposta.includes('error') || resposta.includes('ko')) {
-      console.error(`[REJEITADO] O servidor recusou o login para ${user}:`, resposta);
+      console.error(`[FALHA] O servidor recusou a autenticação para ${user}:`, resposta);
     }
   }
 }
@@ -70,7 +71,7 @@ app.post('/api/conectar', (req, res) => {
 
   const senhaMd5 = crypto.createHash('md5').update(senha).digest('hex');
 
-  console.log(`[TCP SOCK] A iniciar ligação socket para ${usuario}...`);
+  console.log(`[TLS SOCK] A conectar diretamente ao IP ${TARGET_IP} para ${usuario}...`);
 
   if (contasAtivas[usuario]) {
     if (contasAtivas[usuario].socket) {
@@ -79,14 +80,17 @@ app.post('/api/conectar', (req, res) => {
     delete contasAtivas[usuario];
   }
 
-  const client = new net.Socket();
   const faseState = { fase: 0 };
   let bufferAcumulado = '';
 
-  client.setKeepAlive(true, 10000);
-
-  client.connect(TARGET_PORT, TARGET_HOST, () => {
-    console.log(`[TCP CONECTADO] Ligado a ${TARGET_HOST}:${TARGET_PORT}`);
+  // Conexão TLS direta ao IP oficial com SNI configurado
+  const client = tls.connect({
+    host: TARGET_IP,
+    port: TARGET_PORT,
+    servername: TARGET_HOST, // Essencial para o certificado SSL do servidor
+    rejectUnauthorized: false
+  }, () => {
+    console.log(`[TLS CONECTADO] Canal seguro estabelecido com sucesso.`);
     contasAtivas[usuario] = { usuario, mundo, conectado: true, socket: client };
 
     faseState.fase = 1;
@@ -111,7 +115,7 @@ app.post('/api/conectar', (req, res) => {
   });
 
   client.on('error', (err) => {
-    console.error(`[ERRO TCP - ${usuario}]:`, err.message);
+    console.error(`[ERRO TLS - ${usuario}]:`, err.message);
   });
 
   client.on('close', () => {
@@ -119,7 +123,7 @@ app.post('/api/conectar', (req, res) => {
     if (contasAtivas[usuario]) contasAtivas[usuario].conectado = false;
   });
 
-  res.json({ mensagem: `Ligação iniciada para ${usuario}.` });
+  res.json({ mensagem: `Ligação direta iniciada para ${usuario}.` });
 });
 
 app.post('/api/desconectar', (req, res) => {
